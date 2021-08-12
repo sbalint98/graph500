@@ -1,2 +1,4 @@
 *~
 src/graph500_*
+src/build/*
+build/*

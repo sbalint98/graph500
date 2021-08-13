@@ -98,14 +98,26 @@ void run_bfs(int64_t root, int64_t* pred) {
 	k1 = 0; k2 = 1;	
 	while (k1 != k2) {
 		const int64_t oldk2 = k2;
-		queue.submit([&](sycl::handler& cgh){
-			cgh.single_task([=](){
-				int64_t kbuf = 0;
-				int64_t nbuf[THREAD_BUF_LEN];
-				for (int64_t k = k1; k < oldk2; ++k) {
-					const int64_t v = vlist[k];
-					const int64_t veo = g.rowstarts[v+1];
-					for (int64_t vo = g.rowstarts[v]; vo < veo; ++vo) {
+		for (int64_t k = k1; k < oldk2; ++k) {
+			const int64_t v = vlist[k];
+			const int64_t veo = g.rowstarts[v+1];
+			int64_t vo_f = g.rowstarts[v];
+			int64_t size = veo-vo_f;
+			sycl::property_list prop_list{hipsycl::sycl::property::command_group::hipSYCL_lightweight_kernel(false)};
+			int64_t task_treshold = 80;
+			if (size < task_treshold){
+				//std::cout << "Added lightweight porperty" << std::endl;
+				prop_list = sycl::property_list{hipsycl::sycl::property::command_group::hipSYCL_lightweight_kernel(true)};
+			}
+			queue.submit(prop_list, [&](sycl::handler& cgh){
+				cgh.single_task([=](){
+					// auto start = std::chrono::steady_clock::now();
+					int64_t kbuf = 0;
+					int64_t nbuf[THREAD_BUF_LEN];
+					int64_t vo = g.rowstarts[v];
+					//const int64_t v = vlist[k];
+					//std::cout << "Iteration range: " << veo -  g.rowstarts[v] << std::endl;
+					for (; vo < veo; ++vo) {
 						const int64_t j = g.column[vo];
 						if (bfs_tree[j] == -1) {
 							if (int64_cas (&bfs_tree[j], -1, v)) {
@@ -123,16 +135,23 @@ void run_bfs(int64_t root, int64_t* pred) {
 							}
 						}
 					}
-				}
-				if (kbuf){
+					if (kbuf){
 					int64_t voff = int64_fetch_add (k2_ptr, kbuf), vk;
 					assert (voff + kbuf <= nv);
 					for (vk = 0; vk < kbuf; ++vk){
 						vlist[voff + vk] = nbuf[vk];
 					}
-				}
+					}
+					// auto end = std::chrono::steady_clock::now();
+
+					// if(size < task_treshold){
+					// 	std::cout << "small task (" << size << ") time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() << std::endl;
+					// }else{
+					// 	std::cout << "large task (" << size << ") time: " << std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() << std::endl;
+					// }
+				});
 			});
-		});
+		}
 		k1 = oldk2;
 		queue.wait();
 	}
